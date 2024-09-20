@@ -404,10 +404,10 @@ func runPgpool(config *Config, restartCh <-chan bool) error {
 
 	go func() {
 		err := cmd.Start()
-		logger.Info("starting pgpool process", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
 		if err != nil {
 			logger.Error("failed to start pgpool", zap.Error(err))
 		} else {
+			logger.Info("starting pgpool process", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
 			cmd.Wait()
 		}
 		doneCh <- true
@@ -426,7 +426,7 @@ func runPgpool(config *Config, restartCh <-chan bool) error {
 			logger.Debug("pgpool process stopped and ready to restart", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
 		}
 	case <-doneCh:
-		logger.Debug("pgpool process stopped unexpectedly", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
+		logger.Debug("pgpool process stopped unexpectedly")
 		if config.Pgpool.FailDelay > 0 {
 			logger.Debug("restarting pgpool after delay", zap.Int("delay", config.Pgpool.FailDelay))
 			time.Sleep(time.Duration(config.Pgpool.FailDelay) * time.Second)
