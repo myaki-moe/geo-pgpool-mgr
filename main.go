@@ -421,6 +421,17 @@ func runPgpool(config *Config, restartCh <-chan bool) error {
 			if err != nil {
 				cmd.Process.Kill()
 				logger.Debug("failed to send SIGTERM to pgpool, SIGKILL sent", zap.Error(err))
+			} else {
+				select {
+				case <-time.After(1 * time.Second):
+					if err := cmd.Process.Kill(); err != nil {
+						logger.Debug("failed to kill pgpool after SIGTERM", zap.Error(err))
+					} else {
+						logger.Debug("pgpool killed after SIGTERM timeout")
+					}
+				case <-doneCh:
+					logger.Debug("pgpool stopped gracefully after SIGTERM")
+				}
 			}
 			cmd.Wait()
 			logger.Debug("pgpool process stopped and ready to restart", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
@@ -449,7 +460,7 @@ func init() {
 func main() {
 	defer logger.Sync()
 
-	logger.Info("pgpool-mgr v0.0.1 started", zap.Strings("args", os.Args[1:]))
+	logger.Info("pgpool-mgr v0.0.2 started", zap.Strings("args", os.Args[1:]))
 
 	// parse command line arguments
 	configFile := ""
