@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -417,21 +416,9 @@ func runPgpool(config *Config, restartCh <-chan bool) error {
 	case <-restartCh:
 		if cmd.Process != nil {
 			logger.Info("received restart signal, stopping pgpool", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
-			err := cmd.Process.Signal(syscall.SIGTERM)
-			if err != nil {
-				cmd.Process.Kill()
-				logger.Debug("failed to send SIGTERM to pgpool, SIGKILL sent", zap.Error(err))
-			} else {
-				select {
-				case <-time.After(1 * time.Second):
-					if err := cmd.Process.Kill(); err != nil {
-						logger.Debug("failed to kill pgpool after SIGTERM", zap.Error(err))
-					} else {
-						logger.Debug("pgpool killed after SIGTERM timeout")
-					}
-				case <-doneCh:
-					logger.Debug("pgpool stopped gracefully after SIGTERM")
-				}
+			stopCmd := exec.Command(config.Pgpool.ExecPath, "-f", config.Pgpool.TmpConfigPath, "-m", "fast", "stop")
+			if err := stopCmd.Run(); err != nil {
+				logger.Debug("failed to stop pgpool with command", zap.Error(err))
 			}
 			cmd.Wait()
 			logger.Debug("pgpool process stopped and ready to restart", zap.String("pid", strconv.Itoa(cmd.Process.Pid)))
@@ -460,7 +447,7 @@ func init() {
 func main() {
 	defer logger.Sync()
 
-	logger.Info("pgpool-mgr v0.0.2 started", zap.Strings("args", os.Args[1:]))
+	logger.Info("pgpool-mgr v0.0.3 started", zap.Strings("args", os.Args[1:]))
 
 	// parse command line arguments
 	configFile := ""
