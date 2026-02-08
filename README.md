@@ -68,6 +68,12 @@ This process ensures that your Pgpool-II instance always has an up-to-date confi
       scope: pgcluster
       namespace: /patroni/
       timeout: 10
+      tls:
+        # If set, TLS is enabled and this CA is used to verify the etcd server certificate
+        ca: /etc/ssl/etcd/ca.pem
+        # If both are set, mTLS is enabled (client certificate auth)
+        client_cert: /etc/ssl/etcd/client.pem
+        client_key: /etc/ssl/etcd/client-key.pem
 
     local_backends:
     - name: node-1

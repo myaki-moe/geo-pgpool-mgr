@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,6 +20,23 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type EtcdTLSConfig struct {
+	CA         string `yaml:"ca"`
+	ClientCert string `yaml:"client_cert"`
+	ClientKey  string `yaml:"client_key"`
+}
+
+type Etcd3Config struct {
+	Host      string        `yaml:"host"`
+	Port      int           `yaml:"port"`
+	Username  string        `yaml:"username"`
+	Password  string        `yaml:"password"`
+	Scope     string        `yaml:"scope"`
+	Namespace string        `yaml:"namespace"`
+	Timeout   int           `yaml:"timeout"`
+	TLS       EtcdTLSConfig `yaml:"tls"`
+}
+
 type Config struct {
 	Pgpool struct {
 		ConfigAppend  string `yaml:"config_append"`
@@ -26,15 +45,7 @@ type Config struct {
 		ExecPath      string `yaml:"exec_path"`
 		FailDelay     int    `yaml:"fail_delay"`
 	} `yaml:"pgpool"`
-	Etcd3 struct {
-		Host      string `yaml:"host"`
-		Port      int    `yaml:"port"`
-		Username  string `yaml:"username"`
-		Password  string `yaml:"password"`
-		Scope     string `yaml:"scope"`
-		Namespace string `yaml:"namespace"`
-		Timeout   int    `yaml:"timeout"`
-	} `yaml:"etcd3"`
+	Etcd3         Etcd3Config `yaml:"etcd3"`
 	LocalBackends []struct {
 		Name   string `yaml:"name"`
 		Weight int    `yaml:"weight"`
@@ -247,6 +258,47 @@ func parseBackendInfo(jsonData []byte) (string, int, PostgresBackendStatus, erro
 	return hostname, portNum, status, nil
 }
 
+func buildEtcdTLSConfig(tlsCfg EtcdTLSConfig) (*tls.Config, error) {
+	// Enable TLS if any TLS-related field is provided
+	if tlsCfg.CA == "" && tlsCfg.ClientCert == "" && tlsCfg.ClientKey == "" {
+		return nil, nil
+	}
+
+	var rootCAs *x509.CertPool
+	if tlsCfg.CA != "" {
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		caPEM, err := os.ReadFile(tlsCfg.CA)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read etcd3 tls ca file %q: %w", tlsCfg.CA, err)
+		}
+		if ok := pool.AppendCertsFromPEM(caPEM); !ok {
+			return nil, fmt.Errorf("failed to parse any certificates from etcd3 tls ca file %q", tlsCfg.CA)
+		}
+		rootCAs = pool
+	}
+
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+
+	if tlsCfg.ClientCert != "" || tlsCfg.ClientKey != "" {
+		if tlsCfg.ClientCert == "" || tlsCfg.ClientKey == "" {
+			return nil, fmt.Errorf("etcd3 tls client_cert and client_key must be set together")
+		}
+		cert, err := tls.LoadX509KeyPair(tlsCfg.ClientCert, tlsCfg.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load etcd3 tls client cert/key (%q, %q): %w", tlsCfg.ClientCert, tlsCfg.ClientKey, err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+
+	return cfg, nil
+}
+
 func getBackends(config *Config, cli *clientv3.Client) ([]PostgresBackend, error) {
 	var backends []PostgresBackend
 
@@ -313,12 +365,18 @@ func getBackends(config *Config, cli *clientv3.Client) ([]PostgresBackend, error
 }
 
 func watchBackendChanges(config *Config, startCh chan<- bool, restartCh chan<- bool) error {
+	tlsCfg, err := buildEtcdTLSConfig(config.Etcd3.TLS)
+	if err != nil {
+		return err
+	}
+
 	// etcd3 client
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{fmt.Sprintf("%s:%d", config.Etcd3.Host, config.Etcd3.Port)},
 		DialTimeout: time.Duration(config.Etcd3.Timeout) * time.Second,
 		Username:    config.Etcd3.Username,
 		Password:    config.Etcd3.Password,
+		TLS:         tlsCfg,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create etcd client: %w", err)
@@ -447,7 +505,7 @@ func init() {
 func main() {
 	defer logger.Sync()
 
-	logger.Info("pgpool-mgr v0.0.3 started", zap.Strings("args", os.Args[1:]))
+	logger.Info("pgpool-mgr v0.1.0 started", zap.Strings("args", os.Args[1:]))
 
 	// parse command line arguments
 	configFile := ""
