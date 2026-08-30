@@ -505,7 +505,7 @@ func init() {
 func main() {
 	defer logger.Sync()
 
-	logger.Info("pgpool-mgr v0.1.0 started", zap.Strings("args", os.Args[1:]))
+	logger.Info("pgpool-mgr v0.1.1 started", zap.Strings("args", os.Args[1:]))
 
 	// parse command line arguments
 	configFile := ""
